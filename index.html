@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Дашборд мероприятий — Школа 21</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' };
+        (function() {
+            const saved = localStorage.getItem('theme');
+            if (saved === 'light') {
+                document.documentElement.classList.remove('dark');
+            } else {
+                document.documentElement.classList.add('dark');
+            }
+        })();
+    </script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100 min-h-screen theme-transition">
+
+<div id="app" class="p-4 md:p-6 max-w-7xl mx-auto">
+    
+    <!-- ШАПКА -->
+    <header class="header">
+        <div class="header-content">
+            <div>
+                <h1 class="header-title">📊 Дашборд мероприятий</h1>
+                <p class="header-subtitle">Школа 21 · Башкортостан · Апрель — Август 2026</p>
+                <p class="header-meta">
+                    Обновлено: {{ lastUpdate }} · 
+                    <span class="text-internal"> Внутренние: {{ stats.internal }}</span> · 
+                    <span class="text-external"> Внешние: {{ stats.external }}</span>
+                </p>
+            </div>
+
+            <button @click="toggleTheme" class="theme-toggle">
+                <span v-if="isDark" class="text-xl">🌙</span>
+                <span v-else class="text-xl">☀️</span>
+                <span class="text-sm font-medium">{{ isDark ? 'Тёмная' : 'Светлая' }}</span>
+            </button>
+        </div>
+    </header>
+
+    <div v-if="error" class="error-box">
+        <h3 class="error-title">Ошибка загрузки</h3>
+        <p class="error-text">{{ error }}</p>
+    </div>
+
+    <div v-if="loading && events.length === 0" class="loading-box">
+        <div class="loading-spinner"></div>
+        <p class="loading-text">Загрузка данных из Google Sheets...</p>
+    </div>
+
+    <div v-else class="space-y-8">
+
+        <!-- СТАТИСТИКА НЕДЕЛИ -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <p class="stat-label">Мероприятий на неделе</p>
+                <p class="stat-value">{{ weekEventsCount }}</p>
+            </div>
+            <div class="stat-card">
+                <p class="stat-label">Внутренние</p>
+                <p class="stat-value text-internal">{{ weekInternalCount }}</p>
+            </div>
+            <div class="stat-card">
+                <p class="stat-label">Внешние</p>
+                <p class="stat-value text-external">{{ weekExternalCount }}</p>
+            </div>
+            <div class="stat-card">
+                <p class="stat-label">Участников</p>
+                <p class="stat-value text-accent">{{ weekParticipants.toLocaleString() }}</p>
+            </div>
+        </div>
+
+        <!-- НАВИГАЦИЯ ПО НЕДЕЛЯМ -->
+        <div class="card week-nav">
+            <div class="week-nav-header">
+                <button @click="goToFirstWeek" class="btn-secondary">
+                    ⏮ Начало
+                </button>
+                
+                <div class="week-range">
+                    <div class="week-range-text">{{ weekRangeDisplay }}</div>
+                </div>
+                
+                <button @click="goToLastWeek" class="btn-secondary">
+                    Конец ⏭
+                </button>
+            </div>
+            
+            <div class="week-nav-controls">
+                <button @click="previousWeek" :disabled="currentWeekIndex === 0" class="btn-small">
+                    ← Предыдущая
+                </button>
+                <button @click="goToCurrentWeek" class="btn-primary">
+                    Сегодня
+                </button>
+                <button @click="nextWeek" :disabled="currentWeekIndex === totalWeeks - 1" class="btn-small">
+                    Следующая →
+                </button>
+            </div>
+        </div>
+
+        <!-- КАЛЕНДАРЬ -->
+        <div class="card calendar">
+            <div class="calendar-header">
+                <div v-for="dayName in weekDayNames" :key="dayName" class="calendar-day-name">
+                    {{ dayName }}
+                </div>
+            </div>
+            
+            <div class="calendar-grid">
+                <div v-for="(day, index) in calendarDays" :key="index"
+                    :class="[
+                        'calendar-day',
+                        day.isCurrentMonth ? 'calendar-day-current' : 'calendar-day-other',
+                        day.isToday ? 'calendar-day-today' : '',
+                        day.events.length > 0 ? 'has-events' : ''
+                    ]"
+                    @click="day.events.length > 0 && openDayModal(day)">
+                    
+                    <div class="calendar-day-header">
+                        <span :class="[
+                            'calendar-day-number',
+                            day.isToday ? 'calendar-day-number-today' : '',
+                            !day.isCurrentMonth ? 'calendar-day-number-other' : ''
+                        ]">
+                            {{ day.dateNum }}
+                        </span>
+                        <span v-if="day.events.length > 0" class="calendar-day-badge">
+                            {{ day.events.length }}
+                        </span>
+                    </div>
+                    
+                    <div class="calendar-day-events">
+                        <div v-for="event in day.events.slice(0, 3)" :key="event.id"
+                            :class="[
+                                'calendar-event',
+                                event.type === 'Внутреннее' ? 'event-internal' : 'event-external'
+                            ]"
+                            :title="event.name">
+                            {{ event.name }}
+                        </div>
+                        <div v-if="day.events.length > 3" class="calendar-event-more">
+                            +{{ day.events.length - 3 }} ещё
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ЛЕГЕНДА -->
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color legend-color-internal"></div>
+                <span>Внутреннее</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color legend-color-external"></div>
+                <span>Внешнее</span>
+            </div>
+        </div>
+
+        <!-- ГРАФИКИ -->
+        <div class="charts-grid">
+            <div class="card chart-card">
+                <h3 class="chart-title">Внутренние/Внешние</h3>
+                <div ref="typeChartRef"></div>
+            </div>
+            <div class="card chart-card">
+                <h3 class="chart-title">Мероприятия по месяцам</h3>
+                <div ref="monthChartRef"></div>
+            </div>
+            <div class="card chart-card">
+                <h3 class="chart-title">Топ-10 площадок</h3>
+                <div ref="venueChartRef"></div>
+            </div>
+            <div class="card chart-card">
+                <h3 class="chart-title">Участники по месяцам</h3>
+                <div ref="participantsChartRef"></div>
+            </div>
+        </div>
+
+        <!-- ТАБЛИЦА -->
+        <div class="card table-card">
+            <div class="table-header">
+                <h3 class="table-title">📋 Полный реестр мероприятий</h3>
+                <div class="table-filters">
+                    <input v-model="searchQuery" placeholder="🔍 Поиск..." class="filter-input filter-input-wide" />
+                    <select v-model="typeFilter" class="filter-select">
+                        <option value="all">Все типы</option>
+                        <option value="Внутреннее">Внутренние</option>
+                        <option value="Внешнее">Внешние</option>
+                    </select>
+                    <select v-model="monthFilter" class="filter-select">
+                        <option value="all">Все месяцы</option>
+                        <option value="04">Апрель</option>
+                        <option value="05">Май</option>
+                        <option value="06">Июнь</option>
+                        <option value="07">Июль</option>
+                        <option value="08">Август</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-scroll">
+                <table class="table">
+                    <thead class="table-head">
+                        <tr>
+                            <th class="table-th">Дата</th>
+                            <th class="table-th">Название</th>
+                            <th class="table-th">Площадка</th>
+                            <th class="table-th">Участники</th>
+                            <th class="table-th">Организатор</th>
+                            <th class="table-th">Ответственный</th>
+                            <th class="table-th">Тип</th>
+                        </tr>
+                    </thead>
+                    <tbody class="table-body">
+                        <tr v-for="event in paginatedEvents" :key="event.id" class="table-row">
+                            <td class="table-td">{{ event.dateDisplay }}</td>
+                            <td class="table-td table-td-name">{{ event.name || '—' }}</td>
+                            <td class="table-td table-td-venue">{{ event.venue || '—' }}</td>
+                            <td class="table-td table-td-center">{{ event.participants || '—' }}</td>
+                            <td class="table-td table-td-small">{{ event.organizer || '—' }}</td>
+                            <td class="table-td table-td-small">{{ event.responsible || '—' }}</td>
+                            <td class="table-td">
+                                <span :class="event.type === 'Внутреннее' ? 'badge-internal' : 'badge-external'" class="badge">
+                                    {{ event.type }}
+                                </span>
+                            </td>
+                        </tr>
+                        <tr v-if="paginatedEvents.length === 0">
+                            <td colspan="8" class="table-empty">Нет данных по выбранным фильтрам</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="table-footer">
+                <span>Показано {{ paginatedEvents.length }} из {{ filteredEvents.length }}</span>
+                <div class="pagination">
+                    <button @click="page > 1 && page--" :disabled="page === 1" class="pagination-btn">←</button>
+                    <span>Стр. {{ page }} / {{ totalPages }}</span>
+                    <button @click="page < totalPages && page++" :disabled="page === totalPages" class="pagination-btn">→</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО ДНЯ -->
+    <transition name="fade">
+        <div v-if="selectedDay" class="modal-overlay" @click.self="closeDayModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <div>
+                        <h2 class="modal-title">
+                            📅 {{ formatDateFull(selectedDay.dateObj) }}
+                        </h2>
+                        <p class="modal-subtitle">
+                            {{ selectedDay.events.length }} мероприятий
+                        </p>
+                    </div>
+                    <button @click="closeDayModal" class="modal-close">✕</button>
+                </div>
+                
+                <div class="modal-body">
+                    <div v-if="selectedDay.events.length === 0" class="modal-empty">
+                        <div class="modal-empty-icon">🎉</div>
+                        <p class="modal-empty-text">Нет мероприятий на этот день</p>
+                    </div>
+                    
+                    <div v-else class="modal-events">
+                        <div v-for="event in selectedDay.events" :key="event.id" class="modal-event">
+                            <div class="modal-event-header">
+                                <h3 class="modal-event-title">{{ event.name }}</h3>
+                                <span :class="event.type === 'Внутреннее' ? 'badge-internal' : 'badge-external'" class="badge">
+                                    {{ event.type }}
+                                </span>
+                            </div>
+                            
+                            <div class="modal-event-details">
+                                <div v-if="event.time" class="modal-event-detail">
+                                    <span class="modal-event-icon">🕐</span>
+                                    <div>
+                                        <div class="modal-event-label">Время</div>
+                                        <div class="modal-event-value">{{ event.time }}</div>
+                                    </div>
+                                </div>
+                                <div class="modal-event-detail">
+                                    <span class="modal-event-icon">📍</span>
+                                    <div>
+                                        <div class="modal-event-label">Площадка</div>
+                                        <div class="modal-event-value">{{ event.venue || '—' }}</div>
+                                    </div>
+                                </div>
+                                <div class="modal-event-detail">
+                                    <span class="modal-event-icon">👥</span>
+                                    <div>
+                                        <div class="modal-event-label">Участники</div>
+                                        <div class="modal-event-value">{{ event.participants || '—' }}</div>
+                                    </div>
+                                </div>
+                                <div class="modal-event-detail">
+                                    <span class="modal-event-icon">🏢</span>
+                                    <div>
+                                        <div class="modal-event-label">Организатор</div>
+                                        <div class="modal-event-value">{{ event.organizer || '—' }}</div>
+                                    </div>
+                                </div>
+                                <div class="modal-event-detail">
+                                    <span class="modal-event-icon">👤</span>
+                                    <div>
+                                        <div class="modal-event-label">Ответственный</div>
+                                        <div class="modal-event-value">{{ event.responsible || '—' }}</div>
+                                    </div>
+                                </div>
+                                <div class="modal-event-detail">
+                                    <span class="modal-event-icon">📋</span>
+                                    <div>
+                                        <div class="modal-event-label">Категория</div>
+                                        <div class="modal-event-value">{{ event.category || '—' }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div v-if="event.notes" class="modal-event-notes">
+                                <div class="modal-event-label">📝 Примечания</div>
+                                <div class="modal-event-notes-text">{{ event.notes }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="modal-footer">
+                    <button @click="previousDay" class="modal-nav-btn">← Предыдущий день</button>
+                    <button @click="closeDayModal" class="btn-secondary">Закрыть</button>
+                    <button @click="nextDay" class="modal-nav-btn">Следующий день →</button>
+                </div>
+            </div>
+        </div>
+    </transition>
+</div>
+
+<script src="javascript.js"></script>
+
+</body>
+</html>
